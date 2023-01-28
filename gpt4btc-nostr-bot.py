@@ -32,6 +32,7 @@ path_creds = os.path.join(abs_dir, 'credentials.txt')
 path_scrp_dmp = os.path.join(abs_dir, 'nostr_scrape_dump.txt')
 path_log = os.path.join(abs_dir, 'log.txt')
 
+nostrgram_profile = 'https://nostrgram.co/#profile:allEvents:939ddb0c77d18ccd1ebb44c7a32b9cdc29b489e710c54db7cf1383ee86674a24'
 
 # get headless browser driver
 options = Options()
@@ -56,12 +57,7 @@ def wait(min, max):
     print("sleeping " + str(wt) + "s...")
     sleep(wt)
 
-# get authentication credentials
-def auth():
-
-    global path_creds
-    global driver
-
+def get_creds():
     # get authorization credentials from credentials file
     with open(path_creds, 'r') as creds:
 
@@ -73,24 +69,35 @@ def auth():
         for i in range(len(cred_lines_raw)):
             cred_lines[i] = (cred_lines_raw[i].strip())
 
-        # set openai api key
-        openai.api_key = cred_lines[2]
+        return cred_lines
 
-        # login to nostrgram.co
-        try:
-            # load gpt4btc profile page
-            driver.get("https://nostrgram.co/#profile:allEvents:939ddb0c77d18ccd1ebb44c7a32b9cdc29b489e710c54db7cf1383ee86674a24")
-    
-            loginIcon = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#desktopHeaders > div:nth-child(1) > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(1) > div:nth-child(1) > span:nth-child(1)')))
-            loginIcon.click() # click on login key icon
-            loginInput = WebDriverWait(driver, 5).until(EC.visibility_of_element_located((By.CSS_SELECTOR, '.loginInput')))
-            loginInput.send_keys(cred_lines[0]) # input private key
-            loginName = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, '.loginName')))
-            driver.find_element(By.CSS_SELECTOR, 'button.ui-button:nth-child(3)').click() # click OK
-            
-        except Exception as e:
-            traceback.print_exc()
-            print("Login to nostrgram.co failed.")
+def authOpenAI():
+    creds = get_creds()
+    # set openai api key
+    openai.api_key = creds[2]
+    print('openai authorized')
+
+# get authentication credentials
+def authNostr():
+
+    creds = get_creds()
+
+    # login to nostrgram.co
+    try:
+        # load gpt4btc profile page
+        driver.get(nostrgram_profile)
+
+        loginIcon = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#desktopHeaders > div:nth-child(1) > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(1) > div:nth-child(1) > span:nth-child(1)')))
+        loginIcon.click() # click on login key icon
+        loginInput = WebDriverWait(driver, 5).until(EC.visibility_of_element_located((By.CSS_SELECTOR, '.loginInput')))
+        loginInput.send_keys(creds[0]) # input private key
+        loginName = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, '.loginName')))
+        print('nostr logged in: ' + loginName.text)
+        driver.find_element(By.CSS_SELECTOR, 'button.ui-button:nth-child(3)').click() # click OK
+        
+    except Exception as e:
+        traceback.print_exc()
+        print("Login to nostrgram.co failed.")
 
 
 
@@ -127,6 +134,50 @@ def argument_handler():
 
     return parser.parse_args()
 
+def scrape_nostr():
+
+    # get scrape dump lines
+    f = open(path_scrp_dmp, "r")
+    scrp_lines = f.readlines()
+    f.close()
+
+
+    # load 'gpt4btc' search page, doesn't always work!
+    #driver.get('https://nostrgram.co/#search:allEvents:gpt4btc')
+
+    # search for 'gpt4btc'
+    driver.get(nostrgram_profile)
+    WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'span.searchFeed:nth-child(2)'))).click()
+    searchQuery = WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#searchQuery')))
+    searchQuery.send_keys('gpt4btc')
+    driver.find_element(By.CSS_SELECTOR, '#dialogSearch > p:nth-child(1) > button:nth-child(2)').click()
+
+    searchNoteGrid = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#searchNostrgram')))
+
+    # get descendant divs with classnames 'noteBody'
+    noteBodies = WebDriverWait(searchNoteGrid, 10).until(EC.presence_of_all_elements_located((By.XPATH, './/div[contains(@class, "noteBody")]')))
+    print('nostrgram search "gpt4btc" scraped, results: ' + str(len(noteBodies)))
+
+    for body in noteBodies:
+
+        #buildDumpLine(body)
+
+        # get child timestamp
+        timestamp = body.find_element(By.XPATH, './div[contains(@class, "noteTimestamp")]').get_attribute('timestamp')
+        
+        # get descendant noteAuthorPubKey
+        pubKey = body.find_element(By.XPATH, './/span[contains(@class, "noteAuthorPubKey")]').text
+
+        # get child noteContents
+        content = body.find_element(By.XPATH, './div[contains(@class, "noteContent")]').text
+    
+        #print(timestamp + '\n' + pubKey + '\n' + content)
+
+    driver.quit()
+
+def query_openai(p):
+    response = openai.Completion.create(model="text-davinci-003", prompt=p, temperature=0, max_tokens=7)
+    print('openai queried, response: ' + response.choices[0].text)
 
 # get command line arguments and execute appropriate functions
 def main(argv):
@@ -153,43 +204,14 @@ def main(argv):
     # set SIGNINT listener to catch kill signals
     signal.signal(signal.SIGINT, signal_handler)
 
-    executed = 0 # catches any command/args that fall through below tree
 
-    # login to nostrgram.co
-    #auth()
+    # authorize openai and login to nostrgram.co
+    authOpenAI()
+    authNostr()
 
-    # get scrape dump lines
-    f = open(path_scrp_dmp, "r")
-    scrp_lines = f.readlines()
-    f.close()
+    scrape_nostr()
 
-
-    # load 'gpt4btc' search page
-    driver.get('https://nostrgram.co/#search:allEvents:gpt4btc')
-
-    searchNoteGrid = WebDriverWait(driver, 5).until(EC.visibility_of_element_located((By.CSS_SELECTOR, '#searchNostrgram')))
-
-    # get descendant divs with classnames 'noteBody'
-    noteBodies = WebDriverWait(searchNoteGrid, 10).until(EC.presence_of_all_elements_located((By.XPATH, './/div[contains(@class, "noteBody")]')))
-    
-
-    for body in noteBodies:
-
-        #buildDumpLine(body)
-
-        # get child timestamp
-        timestamp = body.find_element(By.XPATH, './div[contains(@class, "noteTimestamp")]').get_attribute('timestamp')
-        
-        # get descendant noteAuthorPubKey
-        pubKey = body.find_element(By.XPATH, './/span[contains(@class, "noteAuthorPubKey")]').text
-
-        # get child noteContents
-        content = body.find_element(By.XPATH, './div[contains(@class, "noteContent")]').text
-    
-        print(timestamp + '\n' + pubKey + '\n' + content)
-
-
-    driver.quit()
+    query_openai("foo")
 
 
 # so main() isn't executed if file is imported
