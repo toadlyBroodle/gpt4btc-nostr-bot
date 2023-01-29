@@ -21,6 +21,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import NoSuchElementException
 
 import openai
 
@@ -33,6 +34,7 @@ path_scrp_dmp = os.path.join(abs_dir, 'nostr_scrape_dump.txt')
 path_log = os.path.join(abs_dir, 'log.txt')
 
 nostrgram_profile = 'https://nostrgram.co/#profile:allEvents:939ddb0c77d18ccd1ebb44c7a32b9cdc29b489e710c54db7cf1383ee86674a24'
+nostrgram_notifications = 'https://nostrgram.co/#notifications:allNotifications'
 
 # get headless browser driver, TODO according to args
 options = Options()
@@ -150,23 +152,39 @@ def scrape_nostr():
     #driver.get('https://nostrgram.co/#search:allEvents:gpt4btc')
 
     # search for 'gpt4btc'
-    driver.get(nostrgram_profile)
-    WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'span.searchFeed:nth-child(2)'))).click()
-    searchQuery = WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#searchQuery')))
-    searchQuery.send_keys('gpt4btc')
-    driver.find_element(By.CSS_SELECTOR, '#dialogSearch > p:nth-child(1) > button:nth-child(2)').click()
+    #driver.get(nostrgram_profile)
+    #WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'span.searchFeed:nth-child(2)'))).click()
+    #searchQuery = WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#searchQuery')))
+    #searchQuery.send_keys('gpt4btc')
+    #driver.find_element(By.CSS_SELECTOR, '#dialogSearch > p:nth-child(1) > button:nth-child(2)').click()
+    #searchNoteGrid = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#searchNostrgram')))
 
-    searchNoteGrid = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#searchNostrgram')))
+    # scrape profile for @gpt4btc tags
+    #driver.get(nostrgram_notifications)
+    WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.XPATH, '/html/body/div[1]/div[2]/div/table/tbody/tr/td[3]/span[1]/span[1]'))).click()
+    
+    # get all notifications
+    notifications = WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#notificationsNostrgram')))
+    allNoteItems = WebDriverWait(notifications, 10).until(EC.presence_of_all_elements_located((By.XPATH, './/div[contains(@class, "event noteItem")]')))
+    
+    # find only @gpt4btc tagged items
+    taggedItems = []
+    for item in allNoteItems:
+        # add only @gpt4btc tags to taggedItems[]
+        try:
+            tag = item.find_element(By.XPATH, './/span[contains(@class, "profileName")]').text
+            if '@gpt4btc' in tag:
+                taggedItems.append(item)
+        except NoSuchElementException:
+            continue
 
-    # get descendant divs with classnames 'noteBody'
-    noteItems = WebDriverWait(searchNoteGrid, 10).until(EC.presence_of_all_elements_located((By.XPATH, './/div[contains(@class, "event noteItem")]')))
-    print('"gpt4btc" search found notes total: ' + str(len(noteItems)))
+    print('@gpt4btc tagged items found: ' + str(len(taggedItems)))
 
     with open(path_scrp_dmp, "r+") as scrp_dmp: # read and write file
         scrp_lines = scrp_dmp.readlines()
 
         new_notes = 0
-        for item in noteItems:
+        for item in taggedItems:
             # get child noteBody
             body = item.find_element(By.XPATH, './div[contains(@class, "noteBody")]')
 
