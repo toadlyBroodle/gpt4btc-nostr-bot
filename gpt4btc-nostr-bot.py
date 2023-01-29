@@ -34,7 +34,7 @@ path_log = os.path.join(abs_dir, 'log.txt')
 
 nostrgram_profile = 'https://nostrgram.co/#profile:allEvents:939ddb0c77d18ccd1ebb44c7a32b9cdc29b489e710c54db7cf1383ee86674a24'
 
-# get headless browser driver
+# get headless browser driver, TODO according to args
 options = Options()
 #options.add_argument("--headless")
 #options.add_argument("--start-maximized")
@@ -101,21 +101,26 @@ def authNostr():
 
 
 
-def buildDumpLine(b):
-    timestamp = b.find_element(By.XPATH, './div[contains(@class, "noteTimestamp")]').timestamp
+def build_dump_line(b):
+    # get child timestamp
+    timestamp = b.find_element(By.XPATH, './div[contains(@class, "noteTimestamp")]').get_attribute('timestamp')    
+    
+    # get descendant noteAuthorPubKey
+    name = b.find_element(By.XPATH, './/span[contains(@class, "noteAuthorName")]').text
+    pub_key = b.find_element(By.XPATH, './/span[contains(@class, "noteAuthorPubKey")]').text
+    
+    # get child noteContents
+    content = b.find_element(By.XPATH, './div[contains(@class, "noteContent")]').text
 
-    return (timestamp+
-                + "TWT_ID" + str(tweet.id)
-                + "SCRN_NAME" + tweet.user.screen_name
-                + "TWT_TXT" + tweet.text.replace("\n", "") + "\n")
+    return (timestamp + "NSTR_NM" + name + "NSTR_KY" + pub_key + "NSTR_CT" + content.replace("\n", " ") + "\n")
 
-def parseDumpLine(dl):
-    # parse scrape dump file, separate tweet ids from screen names
+def parse_dump_line(dl):
+    # separate scrape dump line into fields
     try:
-        a1 = dl.split('TWT_ID')
-        a2 = a1[1].split('SCRN_NAME')
-        a3 = a2[1].split('TWT_TXT')
-        # [time, twt_id, scrn_name, twt_txt]
+        a1 = dl.split('NSTR_NM')
+        a2 = a1[1].split('NSTR_KY')
+        a3 = a2[1].split('NSTR_CT')
+        # [time, nstr_name, nstr_pubkey, nstr_content]
         return [a1[0], a2[0], a3[0], a3[1]]
     except IndexError:
         raise IndexError
@@ -141,7 +146,6 @@ def scrape_nostr():
     scrp_lines = f.readlines()
     f.close()
 
-
     # load 'gpt4btc' search page, doesn't always work!
     #driver.get('https://nostrgram.co/#search:allEvents:gpt4btc')
 
@@ -155,39 +159,74 @@ def scrape_nostr():
     searchNoteGrid = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#searchNostrgram')))
 
     # get descendant divs with classnames 'noteBody'
-    noteBodies = WebDriverWait(searchNoteGrid, 10).until(EC.presence_of_all_elements_located((By.XPATH, './/div[contains(@class, "noteBody")]')))
-    print('nostrgram search "gpt4btc" scraped, results: ' + str(len(noteBodies)))
+    noteItems = WebDriverWait(searchNoteGrid, 10).until(EC.presence_of_all_elements_located((By.XPATH, './/div[contains(@class, "event noteItem")]')))
+    print('"gpt4btc" search found notes total: ' + str(len(noteItems)))
 
-    for body in noteBodies:
+    with open(path_scrp_dmp, "r+") as scrp_dmp: # read and write file
+        scrp_lines = scrp_dmp.readlines()
 
-        #buildDumpLine(body)
+        new_notes = 0
+        for item in noteItems:
+            # get child noteBody
+            body = item.find_element(By.XPATH, './div[contains(@class, "noteBody")]')
 
-        # get child timestamp
-        timestamp = body.find_element(By.XPATH, './div[contains(@class, "noteTimestamp")]').get_attribute('timestamp')
-        
-        # get descendant noteAuthorPubKey
-        pubKey = body.find_element(By.XPATH, './/span[contains(@class, "noteAuthorPubKey")]').text
+            dl = build_dump_line(body)
+            pl = parse_dump_line(dl)
 
-        # get child noteContents
-        content = body.find_element(By.XPATH, './div[contains(@class, "noteContent")]').text
-    
-        #print(timestamp + '\n' + pubKey + '\n' + content)
+            # ignore this bot's own notes
+            if 'npub1jww..q7nawfa' in pl[2]:
+                continue
 
-    driver.quit()
+            # ignore notes already in scrape dump file and notes from self
+            is_new_note = True
+            for line in scrp_lines:
+                if pl[0] in line: # check note timestamp
+                    is_new_note = False
+                    break
+
+            if is_new_note:
+                # write new note to scrape dump
+                scrp_dmp.writelines(dl)
+                new_notes += 1
+
+                # request response from openai
+                answer = query_openai(pl[3])
+                
+                post_note(answer, body, item)
+
+    print('replied to new notes: ' + str(new_notes))
+
+def post_note(n, b, i):
+    # click note reply button
+    b.find_element(By.XPATH, './/span[contains(@class, "noteReply")]').click()
+
+    # get replyContainer
+    replyContainer = i.find_element(By.XPATH, './div[contains(@class, "replyContainer")]')
+
+    # send note to edit box
+    replyEditor = WebDriverWait(replyContainer, 5).until(EC.element_to_be_clickable((By.XPATH, './textarea[contains(@class, "replyEditor")]')))
+    replyEditor.click()
+    replyEditor.send_keys(n)
+    # click reply button
+    replyButton = WebDriverWait(replyContainer, 5).until(EC.presence_of_element_located((By.XPATH, './/button[contains(@class, "replyButton")]')))
+    replyButton.click()
+
 
 def query_openai(p):
-    response = openai.Completion.create(model="text-davinci-003", prompt=p, temperature=0, max_tokens=7)
-    print('openai queried, response: ' + response.choices[0].text)
+    response = openai.Completion.create(model="text-davinci-003", prompt=p, temperature=0, max_tokens=40)
+    content = response.choices[0].text
+    print('openai returned response: ' + content)
+    return content
 
 # get command line arguments and execute appropriate functions
 def main(argv):
     # for logging purposes
     start_time = datetime.now()
 
-    count_reply = 0
-
     # deal with passed in arguments 
     args = argument_handler()
+
+    count_reply = 0
 
     def report_job_status():
         # report how many actions performed
@@ -211,7 +250,7 @@ def main(argv):
 
     scrape_nostr()
 
-    query_openai("foo")
+    driver.quit()
 
 
 # so main() isn't executed if file is imported

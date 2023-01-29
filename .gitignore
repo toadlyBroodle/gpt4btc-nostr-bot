@@ -1,0 +1,5 @@
+__pycache__/
+*credentials.txt
+*log.txt
+*_inactive*
+nostr_scrape_dump.txt
