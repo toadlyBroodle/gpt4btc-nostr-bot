@@ -170,11 +170,13 @@ def scrape_nostr():
     # find only @gpt4btc tagged items
     taggedItems = []
     for item in allNoteItems:
-        # add only @gpt4btc tags to taggedItems[]
         try:
-            tag = item.find_element(By.XPATH, './/span[contains(@class, "profileName")]').text
-            if '@gpt4btc' in tag:
-                taggedItems.append(item)
+            # get list of all user tags in post
+            tags = item.find_elements(By.XPATH, './/span[contains(@class, "profileName")]')
+            for tag in tags:
+                # add only @gpt4btc tags to taggedItems[]
+                if '@gpt4btc' in tag.text:
+                    taggedItems.append(item)
         except NoSuchElementException:
             continue
 
@@ -203,35 +205,74 @@ def scrape_nostr():
                     break
 
             if is_new_note:
-                # write new note to scrape dump
-                scrp_dmp.writelines(dl)
-                new_notes += 1
-
                 # request response from openai
                 answer = query_openai(pl[3])
-                
+
                 post_note(answer, body, item)
+
+                # write new replied to note to scrape dump
+                scrp_dmp.writelines(dl)
+                new_notes += 1
 
     print('replied to new notes: ' + str(new_notes))
 
 def post_note(n, b, i):
-    # click note reply button
-    b.find_element(By.XPATH, './/span[contains(@class, "noteReply")]').click()
+    
+    # determine if note is a reply in thread
+    is_reply = False
+    try:
+        #reply_to = i.get_attribute('replyTo')
+        # if not a reply to thread, this will trigger exception
+        b.find_element(By.XPATH, './/span[contains(@class, "noteReplyId")]').click()
+        is_reply = True
+    except:
+        print('note is not a reply')
 
-    # get replyContainer
-    replyContainer = i.find_element(By.XPATH, './div[contains(@class, "replyContainer")]')
+    if is_reply:
+        # open thread
+        thread_id = i.get_attribute('threadid')
+        thread = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.ID, 'thread_' + thread_id)))
 
-    # send note to edit box
-    replyEditor = WebDriverWait(replyContainer, 5).until(EC.element_to_be_clickable((By.XPATH, './textarea[contains(@class, "replyEditor")]')))
-    replyEditor.click()
-    replyEditor.send_keys(n)
-    # click reply button
-    replyButton = WebDriverWait(replyContainer, 5).until(EC.presence_of_element_located((By.XPATH, './/button[contains(@class, "replyButton")]')))
-    replyButton.click()
+        # find corresponding note id in thread
+        note_id = i.get_attribute('id')
+        thread_note = WebDriverWait(thread, 5).until(EC.presence_of_element_located((By.ID, note_id)))
+
+        # open replyEditor
+        openReplyEditorButton = WebDriverWait(thread_note, 5).until(EC.presence_of_element_located((By.XPATH, './/span[contains(@class, "noteReply hasClick")]')))
+        openReplyEditorButton.click()
+
+        # get replyContainer
+        replyContainer = WebDriverWait(thread_note, 5).until(EC.presence_of_element_located((By.XPATH, './div[contains(@class, "replyContainer")]')))
+
+        # send note to edit box
+        replyEditor = WebDriverWait(replyContainer, 5).until(EC.element_to_be_clickable((By.XPATH, './textarea[contains(@class, "replyEditor")]')))
+        replyEditor.click()
+        replyEditor.send_keys(n)
+        # click reply button
+        replyButton = WebDriverWait(replyContainer, 5).until(EC.presence_of_element_located((By.XPATH, './/button[contains(@class, "replyButton")]')))
+        replyButton.click()
+
+        # close reply thread widget
+        driver.find_element(By.XPATH, '/html/body/div[10]/div[1]/button').click()
+
+    else: # handle notes not replying to thread
+        # click note reply button
+        b.find_element(By.XPATH, './/span[contains(@class, "noteReply")]').click()
+
+        # get replyContainer
+        replyContainer = i.find_element(By.XPATH, './div[contains(@class, "replyContainer")]')
+
+        # send note to edit box
+        replyEditor = WebDriverWait(replyContainer, 5).until(EC.element_to_be_clickable((By.XPATH, './textarea[contains(@class, "replyEditor")]')))
+        replyEditor.click()
+        replyEditor.send_keys(n)
+        # click reply button
+        replyButton = WebDriverWait(replyContainer, 5).until(EC.presence_of_element_located((By.XPATH, './/button[contains(@class, "replyButton")]')))
+        replyButton.click()
 
 
 def query_openai(p):
-    response = openai.Completion.create(model="text-davinci-003", prompt=p, temperature=0, max_tokens=40)
+    response = openai.Completion.create(model="text-davinci-003", prompt=p, temperature=0, max_tokens=100)
     content = response.choices[0].text
     print('openai returned response: ' + content)
     return content
