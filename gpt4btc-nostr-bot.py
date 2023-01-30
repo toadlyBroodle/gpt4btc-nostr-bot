@@ -20,8 +20,7 @@ from selenium.webdriver.firefox.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
-from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 import openai
 
@@ -34,13 +33,7 @@ path_scrp_dmp = os.path.join(abs_dir, 'nostr_scrape_dump.txt')
 path_log = os.path.join(abs_dir, 'log.txt')
 
 nostrgram_profile = 'https://nostrgram.co/#profile:allEvents:939ddb0c77d18ccd1ebb44c7a32b9cdc29b489e710c54db7cf1383ee86674a24'
-nostrgram_notifications = 'https://nostrgram.co/#notifications:allNotifications'
-
-# get headless browser driver, TODO according to args
-options = Options()
-#options.add_argument("--headless")
-#options.add_argument("--start-maximized")
-driver = webdriver.Firefox(options=options)
+#nostrgram_notifications = 'https://nostrgram.co/#notifications:allNotifications'
 
 
 # record certain events in log.txt
@@ -56,7 +49,7 @@ def log(s):
 
 def wait(min, max):
     wt = randint(min, max)
-    print("sleeping " + str(wt) + "s...")
+    #print("sleeping " + str(wt) + "s...")
     sleep(wt)
 
 def get_creds():
@@ -80,7 +73,7 @@ def authOpenAI():
     print('openai authorized')
 
 # get authentication credentials
-def authNostr():
+def authNostr(driver):
 
     creds = get_creds()
 
@@ -128,20 +121,7 @@ def parse_dump_line(dl):
         raise IndexError
 
 
-def argument_handler():
-    parser = argparse.ArgumentParser(description="Beep, boop.. I'm gpt4btc - a nostr bot!")
-
-    # Nostr arguments
-    # group_scrape = parser.add_argument_group('query')
-    # group_scrape.add_argument('-s', '--scrape', action='store_true', dest='n_scr', help='scrape 50 results')
-    # group_scrape.add_argument('-c', '--continuous', action='store_true', dest='n_con', help='scrape continuously')
-
-    # promote_browser = parser.add_argument_group('browser')
-    # promote_browser.add_argument('-b', '--browser', action='store_true', dest='n_bro', help='reply to all scraped results')
-
-    return parser.parse_args()
-
-def scrape_nostr():
+def scrape_nostr(driver):
 
     # get scrape dump lines
     f = open(path_scrp_dmp, "r")
@@ -149,15 +129,31 @@ def scrape_nostr():
     f.close()
 
     # load 'gpt4btc' search page, doesn't always work!
-    #driver.get('https://nostrgram.co/#search:allEvents:gpt4btc')
+    #driver.get('https://nostrgram.co/#search:allEvents:@gpt4btc')
 
-    # search for 'gpt4btc'
-    #driver.get(nostrgram_profile)
-    #WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'span.searchFeed:nth-child(2)'))).click()
-    #searchQuery = WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#searchQuery')))
-    #searchQuery.send_keys('gpt4btc')
-    #driver.find_element(By.CSS_SELECTOR, '#dialogSearch > p:nth-child(1) > button:nth-child(2)').click()
-    #searchNoteGrid = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#searchNostrgram')))
+    # search for '@gpt4btc'
+    driver.get(nostrgram_profile)
+    WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'span.searchFeed:nth-child(2)'))).click()
+    search_query = WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#searchQuery')))
+    search_query.send_keys('gpt4btc')
+    driver.find_element(By.CSS_SELECTOR, '#dialogSearch > p:nth-child(1) > button:nth-child(2)').click()
+    search_note_grid = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#searchNostrgram')))
+    
+    # get all searched items including '@gpt4btc' strings
+    all_searched_items = WebDriverWait(search_note_grid, 10).until(EC.presence_of_all_elements_located((By.XPATH, './/div[contains(@class, "event noteItem")]')))
+
+    tagged_search_items = []
+    for item in all_searched_items:
+        try:
+            content = item.find_element(By.XPATH, './/div[contains(@class, "noteContent")]').text
+            # add only @gpt4btc tags to tagged_items[]
+            if '@gpt4btc' in content:
+                tagged_search_items.append(item)
+        except NoSuchElementException:
+            continue
+
+    print('"@gpt4btc" search items found: ' + str(len(tagged_search_items)))
+    reply_to_tags(driver, tagged_search_items)
 
     # scrape profile for @gpt4btc tags
     #driver.get(nostrgram_notifications)
@@ -168,25 +164,27 @@ def scrape_nostr():
     allNoteItems = WebDriverWait(notifications, 10).until(EC.presence_of_all_elements_located((By.XPATH, './/div[contains(@class, "event noteItem")]')))
     
     # find only @gpt4btc tagged items
-    taggedItems = []
+    tagged_items = []
     for item in allNoteItems:
         try:
             # get list of all user tags in post
             tags = item.find_elements(By.XPATH, './/span[contains(@class, "profileName")]')
             for tag in tags:
-                # add only @gpt4btc tags to taggedItems[]
+                # add only @gpt4btc tags to tagged_items[]
                 if '@gpt4btc' in tag.text:
-                    taggedItems.append(item)
+                    tagged_items.append(item)
         except NoSuchElementException:
             continue
 
-    print('@gpt4btc tagged items found: ' + str(len(taggedItems)))
+    print('@gpt4btc tagged items found: ' + str(len(tagged_items)))
+    reply_to_tags(driver, tagged_items)
 
+def reply_to_tags(driver, tagged_items):
     with open(path_scrp_dmp, "r+") as scrp_dmp: # read and write file
         scrp_lines = scrp_dmp.readlines()
 
         new_notes = 0
-        for item in taggedItems:
+        for item in tagged_items:
             # get child noteBody
             body = item.find_element(By.XPATH, './div[contains(@class, "noteBody")]')
 
@@ -208,15 +206,18 @@ def scrape_nostr():
                 # request response from openai
                 answer = query_openai(pl[3])
 
-                post_note(answer, body, item)
+                post_note(driver, answer, body, item)
 
                 # write new replied to note to scrape dump
                 scrp_dmp.writelines(dl)
                 new_notes += 1
 
+                # don't spam network too fast
+                wait(1, 5)
+
     print('replied to new notes: ' + str(new_notes))
 
-def post_note(n, b, i):
+def post_note(driver, n, b, i):
     
     # determine if note is a reply in thread
     is_reply = False
@@ -226,7 +227,7 @@ def post_note(n, b, i):
         b.find_element(By.XPATH, './/span[contains(@class, "noteReplyId")]').click()
         is_reply = True
     except:
-        print('note is not a reply')
+        None
 
     if is_reply:
         # open thread
@@ -264,18 +265,35 @@ def post_note(n, b, i):
 
         # send note to edit box
         replyEditor = WebDriverWait(replyContainer, 5).until(EC.element_to_be_clickable((By.XPATH, './textarea[contains(@class, "replyEditor")]')))
-        replyEditor.click()
+        #replyEditor.click()
         replyEditor.send_keys(n)
         # click reply button
-        replyButton = WebDriverWait(replyContainer, 5).until(EC.presence_of_element_located((By.XPATH, './/button[contains(@class, "replyButton")]')))
+        replyButton = WebDriverWait(replyContainer, 5).until(EC.element_to_be_clickable((By.XPATH, './/button[contains(@class, "replyButton")]')))
+        
         replyButton.click()
 
 
 def query_openai(p):
+    # limit prompt length to 100chars
+    p = p[:200]
+
     response = openai.Completion.create(model="text-davinci-003", prompt=p, temperature=0, max_tokens=100)
     content = response.choices[0].text
     print('openai returned response: ' + content)
     return content
+
+def argument_handler():
+    parser = argparse.ArgumentParser(description="Beep, boop.. I'm gpt4btc - a nostr bot!")
+
+    # Nostr arguments
+    group_scrape = parser.add_argument_group('scrape')
+    group_scrape.add_argument('-c', '--continuous', action='store_true', dest='n_con', help='scrape continuously')
+    group_scrape.add_argument('-n', '--headless', action='store_true', dest='n_noh', help='scrape in headless mode')
+
+    # promote_browser = parser.add_argument_group('browser')
+    # promote_browser.add_argument('-b', '--browser', action='store_true', dest='n_bro', help='reply to all scraped results')
+
+    return parser.parse_args()
 
 # get command line arguments and execute appropriate functions
 def main(argv):
@@ -302,12 +320,20 @@ def main(argv):
     # set SIGNINT listener to catch kill signals
     signal.signal(signal.SIGINT, signal_handler)
 
+    # get headless browser driver, according to args
+    options = Options()
+    if args.n_noh:
+        options.add_argument("--headless")
+        #options.add_argument("--start-maximized")
+    
+    driver = webdriver.Firefox(options=options)
+
 
     # authorize openai and login to nostrgram.co
     authOpenAI()
-    authNostr()
+    authNostr(driver)
 
-    scrape_nostr()
+    scrape_nostr(driver)
 
     driver.quit()
 
@@ -316,4 +342,3 @@ def main(argv):
 if __name__ == "__main__":
     # remove first script name argument
     main(sys.argv[1:])
-
