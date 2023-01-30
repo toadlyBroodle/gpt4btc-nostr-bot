@@ -205,6 +205,7 @@ def reply_to_tags(driver, tagged_items):
             if is_new_note:
                 # request response from openai
                 answer = query_openai(pl[3])
+                #answer = "test"
 
                 post_note(driver, answer, body, item)
 
@@ -213,7 +214,7 @@ def reply_to_tags(driver, tagged_items):
                 new_notes += 1
 
                 # don't spam network too fast
-                wait(1, 5)
+                #wait(1, 5)
 
     print('replied to new notes: ' + str(new_notes))
 
@@ -254,7 +255,8 @@ def post_note(driver, n, b, i):
         replyButton.click()
 
         # close reply thread widget
-        driver.find_element(By.XPATH, '/html/body/div[10]/div[1]/button').click()
+        driver.find_element(By.CSS_SELECTOR, 'div.ui-dialog:nth-child(11) > div:nth-child(1) > button:nth-child(2)').click()
+
 
     else: # handle notes not replying to thread
         # click note reply button
@@ -277,7 +279,7 @@ def query_openai(p):
     # limit prompt length to 100chars
     p = p[:200]
 
-    response = openai.Completion.create(model="text-davinci-003", prompt=p, temperature=0, max_tokens=100)
+    response = openai.Completion.create(model="text-davinci-003", prompt=p, temperature=0, max_tokens=80)
     content = response.choices[0].text
     print('openai returned response: ' + content)
     return content
