@@ -33,7 +33,7 @@ path_scrp_dmp = os.path.join(abs_dir, 'nostr_scrape_dump.txt')
 path_log = os.path.join(abs_dir, 'log.txt')
 
 nostrgram_profile = 'https://nostrgram.co/#profile:allEvents:939ddb0c77d18ccd1ebb44c7a32b9cdc29b489e710c54db7cf1383ee86674a24'
-#nostrgram_notifications = 'https://nostrgram.co/#notifications:allNotifications'
+nostrgram_notifications = 'https://nostrgram.co/#notifications:allNotifications'
 
 
 # record certain events in log.txt
@@ -128,9 +128,6 @@ def scrape_nostr(driver):
     scrp_lines = f.readlines()
     f.close()
 
-    # load 'gpt4btc' search page, doesn't always work!
-    #driver.get('https://nostrgram.co/#search:allEvents:@gpt4btc')
-
     # search for '@gpt4btc'
     driver.get(nostrgram_profile)
     WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'span.searchFeed:nth-child(2)'))).click()
@@ -153,16 +150,40 @@ def scrape_nostr(driver):
             continue
 
     print('"@gpt4btc" search items found: ' + str(len(tagged_search_items)))
-    reply_to_tags(driver, tagged_search_items)
+    reply_to_items(driver, tagged_search_items)
 
-    # scrape profile for @gpt4btc tags
-    #driver.get(nostrgram_notifications)
+    '''    # load direct notifications only
+    driver.find_element(By.CSS_SELECTOR, '.userActions > span:nth-child(1)').click()
+    direct_notif_checkbox = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.CSS_SELECTOR, '#settingsDirectNotificationsOnly')))
+    # select checkbox, if not already selected
+    if not direct_notif_checkbox.is_selected():
+        direct_notif_checkbox.click()
+    # exit settings window
+    driver.find_element(By.CSS_SELECTOR, 'div.ui-dialog:nth-child(15) > div:nth-child(1) > button:nth-child(2) > span:nth-child(1)').click()
+
+
+    # click notifications icon to load nostrgram_notifications page
     WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.XPATH, '/html/body/div[1]/div[2]/div/table/tbody/tr/td[3]/span[1]/span[1]'))).click()
-    
+
+    # hide reactions, if not already hidden
+    hide_reactions_checkbox = WebDriverWait(driver, 2).until(EC.element_to_be_clickable((By.CSS_SELECTOR, '#notificationsHideReactions')))
+    if not hide_reactions_checkbox.is_selected():
+        hide_reactions_checkbox.click()
+
+    # get all notifications
+    notifications = WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#notificationsNostrgram')))
+    all_direct_notif_items = WebDriverWait(notifications, 10).until(EC.presence_of_all_elements_located((By.XPATH, './/div[contains(@class, "event noteItem")]')))
+
+    # reply only to notifications replying to @gpt4btc
+    print('gpt4btc notification items loaded: ' + str(len(all_direct_notif_items)))
+    reply_to_items(driver, all_direct_notif_items)
+    '''
+
+    # click notifications icon to load nostrgram_notifications page
+    WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.XPATH, '/html/body/div[1]/div[2]/div/table/tbody/tr/td[3]/span[1]/span[1]'))).click()
     # get all notifications
     notifications = WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#notificationsNostrgram')))
     allNoteItems = WebDriverWait(notifications, 10).until(EC.presence_of_all_elements_located((By.XPATH, './/div[contains(@class, "event noteItem")]')))
-    
     # find only @gpt4btc tagged items
     tagged_items = []
     for item in allNoteItems:
@@ -177,9 +198,10 @@ def scrape_nostr(driver):
             continue
 
     print('@gpt4btc tagged items found: ' + str(len(tagged_items)))
-    reply_to_tags(driver, tagged_items)
+    reply_to_items(driver, tagged_items)
 
-def reply_to_tags(driver, tagged_items):
+
+def reply_to_items(driver, tagged_items):
     with open(path_scrp_dmp, "r+") as scrp_dmp: # read and write file
         scrp_lines = scrp_dmp.readlines()
 
@@ -191,11 +213,15 @@ def reply_to_tags(driver, tagged_items):
             dl = build_dump_line(body)
             pl = parse_dump_line(dl)
 
+            # ignore empty notes, e.g. reactions
+            if not pl[3]:
+                continue
+
             # ignore this bot's own notes
             if 'npub1jww..q7nawfa' in pl[2]:
                 continue
 
-            # ignore notes already in scrape dump file and notes from self
+            # ignore notes already in scrape dump file
             is_new_note = True
             for line in scrp_lines:
                 if pl[0] in line: # check note timestamp
@@ -205,20 +231,25 @@ def reply_to_tags(driver, tagged_items):
             if is_new_note:
                 # request response from openai
                 answer = query_openai(pl[3])
-                #answer = "test"
+                #answer = "test" # for testing without querying openai
 
-                post_note(driver, answer, body, item)
+                # try to reply to note
+                success = ""
+                try:
+                    post_reply(driver, answer, body, item)
+                except Exception:
+                    print('post_reply failed: ')
+                    traceback.print_exc()
+                    success = "x" # marked failed dump lines with 'x' prefix
 
                 # write new replied to note to scrape dump
-                scrp_dmp.writelines(dl)
+                scrp_dmp.writelines(success + dl) # success + dl
                 new_notes += 1
 
-                # don't spam network too fast
-                #wait(1, 5)
 
     print('replied to new notes: ' + str(new_notes))
 
-def post_note(driver, n, b, i):
+def post_reply(driver, n, b, i):
     
     # determine if note is a reply in thread
     is_reply = False
@@ -258,9 +289,11 @@ def post_note(driver, n, b, i):
         driver.find_element(By.CSS_SELECTOR, 'div.ui-dialog:nth-child(11) > div:nth-child(1) > button:nth-child(2)').click()
 
 
-    else: # handle notes not replying to thread
+    else: # handle original notes not replying to thread
+
         # click note reply button
         b.find_element(By.XPATH, './/span[contains(@class, "noteReply")]').click()
+        #WebDriverWait(b, 2).until(EC.element_to_be_clickable((By.XPATH, './/span[contains(@class, "noteReply hasClick")]'))).click()
 
         # get replyContainer
         replyContainer = i.find_element(By.XPATH, './div[contains(@class, "replyContainer")]')
@@ -276,12 +309,12 @@ def post_note(driver, n, b, i):
 
 
 def query_openai(p):
-    # limit prompt length to 100chars
+    # limit prompt length to 200 chars
     p = p[:200]
 
     response = openai.Completion.create(model="text-davinci-003", prompt=p, temperature=0, max_tokens=80)
     content = response.choices[0].text
-    print('openai returned response: ' + content)
+    print('prompt: ' + p + '\n' + 'response: ' + content)
     return content
 
 def argument_handler():
