@@ -47,7 +47,7 @@ def log(s):
         l.write(t + "\n")
 
     # also print truncated log to screen
-    p = t[:90] + (t[90:] and '..')
+    p = t[:200] + (t[200:] and '..')
     print(p)
 
 def wait(min, max):
@@ -198,16 +198,20 @@ def scrape_nostr(driver):
     # get all notifications
     notifications = WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#notificationsNostrgram')))
     all_notif_items = WebDriverWait(notifications, 10).until(EC.presence_of_all_elements_located((By.XPATH, './/div[contains(@class, "event noteItem")]')))
-    # remove reactions 
+    # remove reactions and no content tags
     for item in all_notif_items:
         if 'isReaction' in item.get_attribute('class'):
             all_notif_items.remove(item)
+            continue
+        content = item.find_element(By.XPATH, './/div[contains(@class, "noteContent")]').text
+        if content == '@gpt4btc':
+            all_notif_items.remove(item)
+
 
     # reply only to notifications replying to @gpt4btc
     log('notification gpt4btc items loaded: ' + str(len(all_notif_items)))
     reply_to_items(driver, all_notif_items)
     
-
 
 def reply_to_items(driver, tagged_items):
     with open(path_scrp_dmp, "r+") as scrp_dmp: # read and write file
@@ -261,6 +265,9 @@ def reply_to_items(driver, tagged_items):
                 # write new replied to note to scrape dump
                 scrp_dmp.writelines(dl)
                 new_notes += 1
+
+                # don't post to network too fast to avoid spam filters
+                wait(4, 10)
 
 
     log('replied to new notes: ' + str(new_notes))
@@ -326,10 +333,9 @@ def post_reply(driver, n, b, i):
 
 
 def query_openai(p):
-    print('querying prompt:' + p + '.')
     # ignore empty prompts
-    if not p:
-        print('ignoring empty prompt')
+    if not p or p == ' ' or p == '\n':
+        log('ignoring empty prompt')
         return None
 
     # limit prompt length to 200 chars
