@@ -69,14 +69,14 @@ def get_creds():
 
         return cred_lines
 
-def authOpenAI():
+def auth_openai():
     creds = get_creds()
     # set openai api key
     openai.api_key = creds[2]
     log('openai authorized')
 
 # get authentication credentials
-def authNostr(driver):
+def auth_nostr(driver):
 
     creds = get_creds()
 
@@ -124,7 +124,7 @@ def parse_dump_line(dl):
         raise IndexError
 
 
-def scrape_nostr(driver):
+def scrape_nostr(driver, r_ply):
 
     # get scrape dump lines
     f = open(path_scrp_dmp, "r")
@@ -153,7 +153,9 @@ def scrape_nostr(driver):
             continue
 
     log('search "@gpt4btc" items found: ' + str(len(tagged_search_items)))
-    reply_to_items(driver, tagged_search_items)
+    
+    if r_ply:
+        reply_to_items(driver, tagged_search_items)
 
 
     # click notifications icon to load nostrgram_notifications page
@@ -175,7 +177,9 @@ def scrape_nostr(driver):
             continue
 
     log('tagged @gpt4btc items found: ' + str(len(tagged_items)))
-    reply_to_items(driver, tagged_items)
+    
+    if r_ply:
+        reply_to_items(driver, tagged_items)
 
 
     # load direct notifications only
@@ -210,7 +214,9 @@ def scrape_nostr(driver):
 
     # reply only to notifications replying to @gpt4btc
     log('notification gpt4btc items loaded: ' + str(len(all_notif_items)))
-    reply_to_items(driver, all_notif_items)
+    
+    if r_ply:
+        reply_to_items(driver, all_notif_items)
     
 
 def reply_to_items(driver, tagged_items):
@@ -272,6 +278,30 @@ def reply_to_items(driver, tagged_items):
 
     log('replied to new notes: ' + str(new_notes))
 
+def query_openai(p):
+    # ignore empty prompts
+    if not p or p == ' ' or p == '\n':
+        log('ignoring empty prompt')
+        return None
+
+    # limit prompt length to 200 chars
+    p = p[:200]
+
+    # bot was overly shilling fake btc abilities, so remove tag
+    q = p.replace('@gpt4btc', '@gpt')
+
+    # also make answers more concise
+    q = 'answer concisely: ' + q
+
+    response = openai.Completion.create(model="text-davinci-003", prompt=q, temperature=0, max_tokens=80)
+    content = response.choices[0].text
+
+    # put original tags back in
+    content = content.replace('@gpt', '@gpt4btc')
+
+    log('prompt: ' + q + '\n' + 'response: ' + content)
+    return content
+
 def post_reply(driver, n, b, i):
     '''
     success = ""
@@ -332,40 +362,28 @@ def post_reply(driver, n, b, i):
     replyButton.click()
 
 
-def query_openai(p):
-    # ignore empty prompts
-    if not p or p == ' ' or p == '\n':
-        log('ignoring empty prompt')
-        return None
+def post_new_note(driver, p_new):
+    # get new note text area and enter input argument
+    new_note = WebDriverWait(driver, 2).until(EC.element_to_be_clickable((By.XPATH, './/div[contains(@id, "newNote")]')))
+    new_note_textarea = new_note.find_element(By.XPATH, './/textarea[contains(@class, "replyEditor")]')
+    new_note_textarea.send_keys(p_new)
 
-    # limit prompt length to 200 chars
-    p = p[:200]
-
-    # bot was overly shilling fake btc abilities, so remove tag
-    q = p.replace('@gpt4btc', '@gpt')
-
-    # also make answers more concise
-    q = 'answer concisely: ' + q
-
-    response = openai.Completion.create(model="text-davinci-003", prompt=q, temperature=0, max_tokens=80)
-    content = response.choices[0].text
-
-    # put original tags back in
-    content = content.replace('@gpt', '@gpt4btc')
-
-    log('prompt: ' + q + '\n' + 'response: ' + content)
-    return content
+    # get, click send button
+    send_button = WebDriverWait(new_note, 2).until(EC.element_to_be_clickable((By.XPATH, './/button[contains(@class, "replyButton")]')))
+    send_button.click()
 
 def argument_handler():
     parser = argparse.ArgumentParser(description="Beep, boop.. I'm gpt4btc - a nostr bot!")
 
     # Nostr arguments
     group_scrape = parser.add_argument_group('scrape')
-    group_scrape.add_argument('-c', '--continuous', action='store_true', dest='n_con', help='scrape continuously')
-    group_scrape.add_argument('-n', '--headless', action='store_true', dest='n_noh', help='scrape in headless mode')
+    group_scrape.add_argument('-s', '--scrape-once', action='store_true', dest='r_scr', help='scrape once')
+    group_scrape.add_argument('-c', '--scrape-loop', action='store_true', dest='r_scn', help='scrape continuously')
+    group_scrape.add_argument('-n', '--headless', action='store_true', dest='r_hds', help='scrape in headless mode')
+    group_scrape.add_argument('-r', '--reply', action='store_true', dest='r_ply', help='reply to scraped notes')
 
-    # promote_browser = parser.add_argument_group('browser')
-    # promote_browser.add_argument('-b', '--browser', action='store_true', dest='n_bro', help='reply to all scraped results')
+    group_post = parser.add_argument_group('post')
+    group_post.add_argument('-p', '--post-new-note', type=str, action='store', dest='p_new', help='post new note')
 
     return parser.parse_args()
 
@@ -385,23 +403,33 @@ def main(argv):
 
     # get headless browser driver, according to args
     options = Options()
-    if args.n_noh:
+    if args.r_hds:
         options.add_argument("--headless")
         #options.add_argument("--start-maximized")
     
     driver = webdriver.Firefox(options=options)
 
+    # scrape feed for things to reply to
+    if args.r_scr:
+        # login to nostrgram.co and authorize openai
+        auth_nostr(driver)
+        auth_openai()
 
-    # authorize openai and login to nostrgram.co
-    authOpenAI()
-    authNostr(driver)
+        # scrape, and reply?
+        scrape_nostr(driver, args.r_ply)
+        
+        driver.quit()
+        log(get_runtime())
 
-    scrape_nostr(driver)
+    # post new note
+    if args.p_new:
+        # auth nostr and load profile page
+        auth_nostr(driver)
 
-    driver.quit()
+        post_new_note(driver, args.p_new)
 
-    log(get_runtime())
-
+        driver.quit()
+        log(get_runtime())
 
 # so main() isn't executed if file is imported
 if __name__ == "__main__":
