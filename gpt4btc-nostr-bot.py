@@ -279,8 +279,8 @@ def reply_to_items(driver, tagged_items):
     log('replied to new notes: ' + str(new_notes))
 
 def query_openai(p):
-    # ignore empty prompts
-    if not p or p == ' ' or p == '\n':
+    # ignore empty prompts and reactions that snuck through previous filters
+    if not p or p == ' ' or p == '\n' or p == '🤙' or p == '❤️':
         log('ignoring empty prompt')
         return None
 
