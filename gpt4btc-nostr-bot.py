@@ -235,7 +235,7 @@ def reply_to_items(driver, tagged_items):
         scrp_lines = scrp_dmp.readlines()
 
         new_notes = 0
-        for item in tagged_items:
+        for item in reversed(tagged_items): # go from oldest to youngest
             # get child noteBody
             body = item.find_element(By.XPATH, './div[contains(@class, "noteBody")]')
 
@@ -295,36 +295,31 @@ def reply_to_items(driver, tagged_items):
 
 # only reply to user 10 times in 5m
 def limit_user_replies(item, scrp_lines):
-    # get user pubkey
-    user_pubkey = item.find_element(By.XPATH, './/span[contains(@class, "noteAuthorPubKey")]').text
+    # extract info from item
+    item_dl = build_dump_line(item.find_element(By.XPATH, './div[contains(@class, "noteBody")]'))
     
-    # does pubkey occur 10 times in past 5m?
-    time_curr = get_curr_timestamp()
-    time_5m_ago = time_curr - 300
     key_cnt = 0
     for line in reversed(scrp_lines): # read from last to first
         pl = parse_dump_line(line)
 
         # if user keys match, increment cnt
-        if user_pubkey == pl[2]:
+        if item_dl[2] == pl[2]:
             key_cnt += 1
         
-            # add user to limit list
+            # add user to limit list if exceeds 10 posts in 5m
             if key_cnt > 9:
-                # get child noteBody
-                body = item.find_element(By.XPATH, './div[contains(@class, "noteBody")]')
-                dl = build_dump_line(body)
                 
-                # remove content from dl and write to limit list
-                lll = dl.split('NSTR_CT')
+                # write user info to limit list
+                lll = item_dl.split('NSTR_CT')
                 with open(limit_list, 'w') as ll:
                     ll.writelines(lll[0])
 
                 log('add user to limit list: ' + lll[0])
                 return True
 
-        # was pl time > 5m ago?
-        if time_5m_ago > int(pl[0]):
+        # if dump line is older than 5m before post, then user is not spamming
+        time_5m_before_post = int(item_dl[0]) - 300
+        if time_5m_before_post > int(pl[0]):
             return False
     return False
 
@@ -349,7 +344,7 @@ def query_openai(p):
     # put original tags back in
     content = content.replace('@gpt', '@gpt4btc')
 
-    log('prompt: ' + q + '\n' + 'response: ' + content)
+    log('prompt: ' + q + 'response: ' + content)
     return content
 
 def post_reply(driver, n, b, i):
