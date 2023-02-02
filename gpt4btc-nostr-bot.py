@@ -31,10 +31,14 @@ abs_dir = os.path.dirname(os.path.abspath(__file__)) #<-- absolute path to direc
 path_creds = os.path.join(abs_dir, 'credentials.txt')
 path_scrp_dmp = os.path.join(abs_dir, 'nostr_scrape_dump.txt')
 path_log = os.path.join(abs_dir, 'log.txt')
+limit_list = os.path.join(abs_dir, 'limit_list.txt')
+block_list = os.path.join(abs_dir, 'block_list.txt')
 
 nostrgram_profile = 'https://nostrgram.co/#profile:allEvents:939ddb0c77d18ccd1ebb44c7a32b9cdc29b489e710c54db7cf1383ee86674a24'
 nostrgram_notifications = 'https://nostrgram.co/#notifications:allNotifications'
 
+def get_curr_timestamp():
+    return int(datetime.now().timestamp())
 
 # record certain events in log.txt
 start_time = datetime.now()
@@ -46,9 +50,8 @@ def log(s):
     with open(path_log, 'a') as l:
         l.write(t + "\n")
 
-    # also print truncated log to screen
-    p = t[:200] + (t[200:] and '..')
-    print(p)
+    # also print log to terminal
+    print(t)
 
 def wait(min, max):
     wt = randint(min, max)
@@ -83,7 +86,15 @@ def auth_nostr(driver):
     # login to nostrgram.co
     try:
         # load gpt4btc profile page
-        driver.get(nostrgram_profile)
+        driver.get(nostrgram_profile) 
+        
+        # dismiss possible error loading relays
+        try:
+            ui_dialog = WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.XPATH, './/div[contains(@class, "ui-dialog")]')))
+            ui_dialog.find_element(By.XPATH, './/button[contains(@class, "ui-button")]').click()
+            print('dismissed error dialog')
+        except: 
+            print('no error dialog to dismiss')
 
         loginIcon = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#desktopHeaders > div:nth-child(1) > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(1) > div:nth-child(1) > span:nth-child(1)')))
         loginIcon.click() # click on login key icon
@@ -181,7 +192,7 @@ def scrape_nostr(driver, r_ply):
     if r_ply:
         reply_to_items(driver, tagged_items)
 
-
+    '''
     # load direct notifications only
     driver.find_element(By.CSS_SELECTOR, '.userActions > span:nth-child(1)').click()
     direct_notif_checkbox = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.CSS_SELECTOR, '#settingsDirectNotificationsOnly')))
@@ -190,7 +201,7 @@ def scrape_nostr(driver, r_ply):
         direct_notif_checkbox.click()
     # click ok to accept settings
     driver.find_element(By.XPATH, '/html/body/div[16]/div[3]/div/button').click()
-
+    '''
     # click notifications icon to load nostrgram_notifications page
     WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.XPATH, '/html/body/div[1]/div[2]/div/table/tbody/tr/td[3]/span[1]/span[1]'))).click()
 
@@ -241,14 +252,19 @@ def reply_to_items(driver, tagged_items):
 
             # ignore notes already in scrape dump file
             is_new_note = True
-            for line in scrp_lines:
+            for line in reversed(scrp_lines): # read from last to first for efficiency
                 if pl[0] in line: # check note timestamp
                     is_new_note = False
                     break
 
             if is_new_note:
-                # request response from openai
-                answer = query_openai(pl[3])
+
+                # if user is spamming, add to limit list for 1hr
+                answer = None
+                if limit_user_replies(item, scrp_lines):
+                    answer = 'It\'s been fun chatting, but I\'m taking a short break now. We can chat all you like in the app: chatgpt3-android.app'
+                else: # request response from openai
+                    answer = query_openai(pl[3])
                 
                 # don't reply to empty prompts
                 if answer == None:
@@ -275,8 +291,42 @@ def reply_to_items(driver, tagged_items):
                 # don't post to network too fast to avoid spam filters
                 wait(4, 10)
 
-
     log('replied to new notes: ' + str(new_notes))
+
+# only reply to user 10 times in 5m
+def limit_user_replies(item, scrp_lines):
+    # get user pubkey
+    user_pubkey = item.find_element(By.XPATH, './/span[contains(@class, "noteAuthorPubKey")]').text
+    
+    # does pubkey occur 10 times in past 5m?
+    time_curr = get_curr_timestamp()
+    time_5m_ago = time_curr - 300
+    key_cnt = 0
+    for line in reversed(scrp_lines): # read from last to first
+        pl = parse_dump_line(line)
+
+        # if user keys match, increment cnt
+        if user_pubkey == pl[2]:
+            key_cnt += 1
+        
+            # add user to limit list
+            if key_cnt > 9:
+                # get child noteBody
+                body = item.find_element(By.XPATH, './div[contains(@class, "noteBody")]')
+                dl = build_dump_line(body)
+                
+                # remove content from dl and write to limit list
+                lll = dl.split('NSTR_CT')
+                with open(limit_list, 'w') as ll:
+                    ll.writelines(lll[0])
+
+                log('add user to limit list: ' + lll[0])
+                return True
+
+        # was pl time > 5m ago?
+        if time_5m_ago > int(pl[0]):
+            return False
+    return False
 
 def query_openai(p):
     # ignore empty prompts and reactions that snuck through previous filters
@@ -284,13 +334,13 @@ def query_openai(p):
         log('ignoring empty prompt')
         return None
 
-    # limit prompt length to 200 chars
-    p = p[:200]
+    # limit prompt length to ~80 words
+    p = p[:400]
 
     # bot was overly shilling fake btc abilities, so remove tag
     q = p.replace('@gpt4btc', '@gpt')
 
-    # also make answers more concise
+    # make replies concise
     q = 'answer concisely: ' + q
 
     response = openai.Completion.create(model="text-davinci-003", prompt=q, temperature=0, max_tokens=80)
