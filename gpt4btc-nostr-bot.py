@@ -55,7 +55,7 @@ def log(s):
 
 def wait(min, max):
     wt = randint(min, max)
-    #print("sleeping " + str(wt) + "s...")
+    print("sleeping " + str(wt) + "s...")
     sleep(wt)
 
 def get_creds():
@@ -109,7 +109,6 @@ def auth_nostr(driver):
         log("Login to nostrgram.co failed.")
 
 
-
 def build_dump_line(b):
     # get child timestamp
     timestamp = b.find_element(By.XPATH, './div[contains(@class, "noteTimestamp")]').get_attribute('timestamp')    
@@ -146,6 +145,7 @@ def parse_limit_line(dl):
         raise IndexError
 
 def scrape_nostr(driver, r_ply):
+    reply_cnt = 0
 
     # get scrape dump lines
     f = open(path_scrp_dmp, "r")
@@ -173,10 +173,9 @@ def scrape_nostr(driver, r_ply):
         except NoSuchElementException:
             continue
 
-    log('search "@gpt4btc" items found: ' + str(len(tagged_search_items)))
+    #log('search "@gpt4btc" items found: ' + str(len(tagged_search_items)))
     
-    reply_to_items(driver, r_ply, tagged_search_items)
-
+    reply_cnt += reply_to_items(driver, r_ply, tagged_search_items)
 
     # click notifications icon to load nostrgram_notifications page
     WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.XPATH, '/html/body/div[1]/div[2]/div/table/tbody/tr/td[3]/span[1]/span[1]'))).click()
@@ -196,9 +195,9 @@ def scrape_nostr(driver, r_ply):
         except NoSuchElementException:
             continue
 
-    log('tagged @gpt4btc items found: ' + str(len(tagged_items)))
+    #log('tagged @gpt4btc items found: ' + str(len(tagged_items)))
     
-    reply_to_items(driver, r_ply, tagged_items)
+    reply_cnt += reply_to_items(driver, r_ply, tagged_items)
 
     '''
     # load direct notifications only
@@ -232,16 +231,18 @@ def scrape_nostr(driver, r_ply):
 
 
     # reply only to notifications replying to @gpt4btc
-    log('notification gpt4btc items loaded: ' + str(len(all_notif_items)))
+    #log('notification gpt4btc items loaded: ' + str(len(all_notif_items)))
     
-    reply_to_items(driver, r_ply, all_notif_items)
+    reply_cnt += reply_to_items(driver, r_ply, all_notif_items)
+
+    return reply_cnt
     
 
 def reply_to_items(driver, r_ply, tagged_items):
+    reply_cnt = 0
     with open(path_scrp_dmp, "r+") as scrp_dmp: # read and write file
         scrp_lines = scrp_dmp.readlines()
 
-        new_notes = 0
         for item in reversed(tagged_items): # go from oldest to youngest
             # get child noteBody
             body = item.find_element(By.XPATH, './div[contains(@class, "noteBody")]')
@@ -304,15 +305,15 @@ def reply_to_items(driver, r_ply, tagged_items):
                     driver.get(current_page)
                 '''
                 post_reply(driver, answer, body, item)
+                reply_cnt += 1
 
                 # write new replied to note to scrape dump
                 scrp_dmp.writelines(dl)
-                new_notes += 1
 
-                # don't post to network too fast to avoid spam filters
+                # don't post to network too fast to hopefully avoid spam filters
                 wait(4, 10)
 
-    log('replied to new notes: ' + str(new_notes))
+    return reply_cnt
 
 # only reply to user 10 times in 5m
 def limit_user_replies(item, scrp_lines):
@@ -344,7 +345,7 @@ def limit_user_replies(item, scrp_lines):
             key_cnt += 1
         
             # add user to limit list if exceeds 10 posts in 5m
-            if key_cnt > 2:
+            if key_cnt > 9:
                 
                 # write user info to limit list
                 lll = item_dl.split('NSTR_CT')
@@ -436,11 +437,11 @@ def post_reply(driver, n, b, i):
     replyButton.click()
 
 
-def post_new_note(driver, p_new):
+def post_new_note(driver, p_ost):
     # get new note text area and enter input argument
     new_note = WebDriverWait(driver, 2).until(EC.element_to_be_clickable((By.XPATH, './/div[contains(@id, "newNote")]')))
     new_note_textarea = new_note.find_element(By.XPATH, './/textarea[contains(@class, "replyEditor")]')
-    new_note_textarea.send_keys(p_new)
+    new_note_textarea.send_keys(p_ost)
 
     # get, click send button
     send_button = WebDriverWait(new_note, 2).until(EC.element_to_be_clickable((By.XPATH, './/button[contains(@class, "replyButton")]')))
@@ -457,7 +458,7 @@ def argument_handler():
     group_scrape.add_argument('-r', '--reply', action='store_true', dest='r_ply', help='reply to scraped notes')
 
     group_post = parser.add_argument_group('post')
-    group_post.add_argument('-p', '--post-new-note', type=str, action='store', dest='p_new', help='post new note')
+    group_post.add_argument('-p', '--post-new-note', type=str, action='store', dest='p_ost', help='post new note')
 
     return parser.parse_args()
 
@@ -475,35 +476,59 @@ def main(argv):
     # set SIGNINT listener to catch kill signals
     signal.signal(signal.SIGINT, signal_handler)
 
-    # get headless browser driver, according to args
-    options = Options()
-    if args.r_hds:
-        options.add_argument("--headless")
-        #options.add_argument("--start-maximized")
-    
-    driver = webdriver.Firefox(options=options)
+    driver = None
+    def init(r_hds):
+        # get headless browser driver, according to args
+        options = Options()
+        if args.r_hds:
+            options.add_argument("--headless")
+            #options.add_argument("--start-maximized")
+        driver = webdriver.Firefox(options=options)
 
-    # scrape feed for things to reply to
-    if args.r_scr:
         # login to nostrgram.co and authorize openai
         auth_nostr(driver)
         auth_openai()
+        
+        return driver
+
+    # scrape feed once
+    if args.r_scr:
+        driver = init(args.r_hds)
 
         # scrape, and reply?
-        scrape_nostr(driver, args.r_ply)
-        
-        driver.quit()
-        log(get_runtime())
+        reply_cnt = scrape_nostr(driver, args.r_ply)
+
+        log("new replies: " + str(reply_cnt))
+
+    # scrape feed continuously
+    if args.r_scn:
+        driver = init(args.r_hds)
+
+        num_errors = 0
+        while num_errors < 3: # exit after three errors caught
+            try:
+                # scrape, and reply?
+                reply_cnt = scrape_nostr(driver, args.r_ply)
+
+                log("new replies: " + str(reply_cnt))
+
+                # wait 5-10m between passes
+                wait(300, 600)
+
+            except Exception:
+                log('Error while scraping continuously: ' + traceback.format_exc())
+                num_errors += 1
+                init(args.r_hds) # reboot
 
     # post new note
-    if args.p_new:
-        # auth nostr and load profile page
-        auth_nostr(driver)
+    if args.p_ost:
+        driver = init(args.r_hds)
 
-        post_new_note(driver, args.p_new)
+        post_new_note(driver, args.p_ost)
+        log('posted note: ' + args.p_ost)
 
-        driver.quit()
-        log(get_runtime())
+    driver.quit()
+    log(get_runtime())
 
 # so main() isn't executed if file is imported
 if __name__ == "__main__":
