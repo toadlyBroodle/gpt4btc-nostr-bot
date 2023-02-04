@@ -249,9 +249,7 @@ def reply_to_items(driver, r_ply, tagged_items):
             dl = build_dump_line(body)
             pl = parse_dump_line(dl)
 
-            # ignore empty notes, e.g. reactions
-            if not pl[3]:
-                continue
+            p = pl[3]
 
             # ignore this bot's own notes
             if 'npub1jww..q7nawfa' in pl[2]:
@@ -265,6 +263,12 @@ def reply_to_items(driver, r_ply, tagged_items):
                     break
 
             if is_new_note:
+
+                # ignore empty notes and reactions
+                if not p or p == ' ' or p == '\n' or p == '🤙' or p == '❤️':
+                    log('ignoring empty prompt')
+                    scrp_dmp.write(dl)
+                    continue
 
                 # if only scraping then write to scrape dump without replying
                 if r_ply == False:
@@ -356,11 +360,6 @@ def limit_user_replies(item, scrp_lines):
     return 'no'
 
 def query_openai(p):
-    # ignore empty prompts and reactions that snuck through previous filters
-    if not p or p == ' ' or p == '\n' or p == '🤙' or p == '❤️':
-        log('ignoring empty prompt')
-        return None
-
     # limit prompt length to ~80 words
     p = p[:400]
 
