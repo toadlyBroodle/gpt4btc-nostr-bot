@@ -134,6 +134,16 @@ def parse_dump_line(dl):
     except IndexError:
         raise IndexError
 
+def parse_limit_line(dl):
+    # separate scrape dump line into fields
+    try:
+        a1 = dl.split('NSTR_NM')
+        a2 = a1[1].split('NSTR_KY')
+        a3 = a2[1].split('NSTR_CT')
+        # [time, nstr_name, nstr_pubkey]
+        return [a1[0], a2[0], a3[0]]
+    except IndexError:
+        raise IndexError
 
 def scrape_nostr(driver, r_ply):
 
@@ -165,8 +175,7 @@ def scrape_nostr(driver, r_ply):
 
     log('search "@gpt4btc" items found: ' + str(len(tagged_search_items)))
     
-    if r_ply:
-        reply_to_items(driver, tagged_search_items)
+    reply_to_items(driver, r_ply, tagged_search_items)
 
 
     # click notifications icon to load nostrgram_notifications page
@@ -189,8 +198,7 @@ def scrape_nostr(driver, r_ply):
 
     log('tagged @gpt4btc items found: ' + str(len(tagged_items)))
     
-    if r_ply:
-        reply_to_items(driver, tagged_items)
+    reply_to_items(driver, r_ply, tagged_items)
 
     '''
     # load direct notifications only
@@ -226,11 +234,10 @@ def scrape_nostr(driver, r_ply):
     # reply only to notifications replying to @gpt4btc
     log('notification gpt4btc items loaded: ' + str(len(all_notif_items)))
     
-    if r_ply:
-        reply_to_items(driver, all_notif_items)
+    reply_to_items(driver, r_ply, all_notif_items)
     
 
-def reply_to_items(driver, tagged_items):
+def reply_to_items(driver, r_ply, tagged_items):
     with open(path_scrp_dmp, "r+") as scrp_dmp: # read and write file
         scrp_lines = scrp_dmp.readlines()
 
@@ -259,16 +266,26 @@ def reply_to_items(driver, tagged_items):
 
             if is_new_note:
 
+                # if only scraping then write to scrape dump without replying
+                if r_ply == False:
+                    scrp_dmp.writelines(dl)
+                    continue
+
                 # if user is spamming, add to limit list for 1hr
+                limit = limit_user_replies(item, scrp_lines)
                 answer = None
-                if limit_user_replies(item, scrp_lines):
-                    answer = 'It\'s been fun chatting, but I\'m taking a short break now. We can chat all you like in the app: chatgpt3-android.app'
-                else: # request response from openai
+                if limit == 'added':
+                    answer = 'It\'s been fun chatting, but I\'m taking a short break now. We can chat all you like in the app: https://chatgpt3-android.app'
+                elif limit == 'ignore' : # ignore user's post
+                    continue
+                else: # request response from openai - limit='no'
                     answer = query_openai(pl[3])
                 
                 # don't reply to empty prompts
                 if answer == None:
                     continue
+
+                log('prompt: ' + pl[3] + 'response: ' + answer)
 
                 '''# try to reply
                 success = ""
@@ -297,31 +314,46 @@ def reply_to_items(driver, tagged_items):
 def limit_user_replies(item, scrp_lines):
     # extract info from item
     item_dl = build_dump_line(item.find_element(By.XPATH, './div[contains(@class, "noteBody")]'))
-    
+    new_pl = parse_dump_line(item_dl)
+
+    # ignore post if user added to limit list less than 5m before post
+    time_5m_before_post = int(new_pl[0]) - 300
+    print(time_5m_before_post)
+    with open(limit_list, 'r') as ll:
+        lll = ll.readlines()
+        for l in reversed(lll): # get most recent user limit
+            if (new_pl[2] in l): # is user in limit list?
+                pl = parse_limit_line(l)
+                if (time_5m_before_post < int(pl[0])): # was user added to ll less than 5m before post?
+                    log('ignoring post from ' + new_pl[1] + ' at ' + new_pl[0])
+                    # add ignored note to scrape dump
+                    with open(path_scrp_dmp, 'a') as sd:
+                        sd.write(item_dl)
+                    return 'ignore'
+
     key_cnt = 0
     for line in reversed(scrp_lines): # read from last to first
         pl = parse_dump_line(line)
 
         # if user keys match, increment cnt
-        if item_dl[2] == pl[2]:
+        if new_pl[2] == pl[2]:
             key_cnt += 1
         
             # add user to limit list if exceeds 10 posts in 5m
-            if key_cnt > 9:
+            if key_cnt > 2:
                 
                 # write user info to limit list
                 lll = item_dl.split('NSTR_CT')
-                with open(limit_list, 'w') as ll:
-                    ll.writelines(lll[0])
+                with open(limit_list, 'a') as ll:
+                    ll.write(lll[0] + '\n')
 
                 log('add user to limit list: ' + lll[0])
-                return True
+                return 'added'
 
         # if dump line is older than 5m before post, then user is not spamming
-        time_5m_before_post = int(item_dl[0]) - 300
         if time_5m_before_post > int(pl[0]):
-            return False
-    return False
+            return 'no'
+    return 'no'
 
 def query_openai(p):
     # ignore empty prompts and reactions that snuck through previous filters
@@ -342,10 +374,8 @@ def query_openai(p):
     content = response.choices[0].text
 
     # put original tags back in
-    content = content.replace('@gpt', '@gpt4btc')
+    return content.replace('@gpt', '@gpt4btc')
 
-    log('prompt: ' + q + 'response: ' + content)
-    return content
 
 def post_reply(driver, n, b, i):
     '''

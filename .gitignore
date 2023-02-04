@@ -3,3 +3,4 @@ __pycache__/
 *log.txt
 *_inactive*
 nostr_scrape_dump.txt
+limit_list.txt
