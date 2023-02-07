@@ -55,7 +55,7 @@ def log(s):
 
 def wait(min, max):
     wt = randint(min, max)
-    print("sleeping " + str(wt) + "s...")
+    log("sleeping ~" + str(round(wt/60, 1)) + "m...")
     sleep(wt)
 
 def get_creds():
@@ -250,10 +250,15 @@ def reply_to_items(driver, r_ply, tagged_items):
             dl = build_dump_line(body)
             pl = parse_dump_line(dl)
 
-            p = pl[3]
+            # ignore this bot's own notes, and ignore all notes from @gpt3
+            if 'npub1jww..q7nawfa' in pl[2] or 'npub1tsg..qtkhtk4' in pl[2]:
+                continue
 
-            # ignore this bot's own notes
-            if 'npub1jww..q7nawfa' in pl[2]:
+            # ignore empty notes and reactions
+            p = pl[3]
+            if not p or p == ' ' or p == '\n' or p == '🤙' or p == '❤️':
+                log('ignoring empty prompt')
+                scrp_dmp.write(dl)
                 continue
 
             # ignore notes already in scrape dump file
@@ -264,12 +269,6 @@ def reply_to_items(driver, r_ply, tagged_items):
                     break
 
             if is_new_note:
-
-                # ignore empty notes and reactions
-                if not p or p == ' ' or p == '\n' or p == '🤙' or p == '❤️':
-                    log('ignoring empty prompt')
-                    scrp_dmp.write(dl)
-                    continue
 
                 # if only scraping then write to scrape dump without replying
                 if r_ply == False:
@@ -516,10 +515,14 @@ def main(argv):
                 wait(300, 600)
 
             except Exception:
+                driver.quit()
                 log('Error while scraping continuously: ' + traceback.format_exc())
                 num_errors += 1
-                init(args.r_hds) # reboot
 
+                # wait for 1 hr before rebooting
+                wait(3600, 3600)
+                init(args.r_hds)
+    
     # post new note
     if args.p_ost:
         driver = init(args.r_hds)
