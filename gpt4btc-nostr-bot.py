@@ -258,13 +258,6 @@ def reply_to_items(driver, r_ply, tagged_items):
             if 'npub1jww..q7nawfa' in pl[2] or 'npub1tsg..qtkhtk4' in pl[2]:
                 continue
 
-            # ignore empty notes and reactions
-            p = pl[3]
-            if not p or p == ' ' or p == '\n' or p == '🤙' or p == '❤️':
-                log('ignoring empty prompt')
-                scrp_dmp.write(dl)
-                continue
-
             # ignore notes already in scrape dump file
             is_new_note = True
             for line in reversed(scrp_lines): # read from last to first for efficiency
@@ -273,6 +266,13 @@ def reply_to_items(driver, r_ply, tagged_items):
                     break
 
             if is_new_note:
+
+                # ignore empty notes and reactions, but add them to scrape dump 
+                p = pl[3]
+                if not p or p == ' ' or p == '\n' or p == '🤙' or p == '❤️':
+                    log('ignoring empty prompt')
+                    scrp_dmp.write(dl)
+                    continue
 
                 # if only scraping then write to scrape dump without replying
                 if r_ply == False:
