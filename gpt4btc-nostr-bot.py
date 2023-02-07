@@ -152,7 +152,7 @@ def scrape_nostr(driver, r_ply):
     scrp_lines = f.readlines()
     f.close()
 
-    # search for '@gpt4btc'
+    '''    # search for '@gpt4btc'
     try:
         driver.get(nostrgram_profile)
         WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'span.searchFeed:nth-child(2)'))).click()
@@ -179,7 +179,8 @@ def scrape_nostr(driver, r_ply):
         
     except Exception:
         log('Error searching "gpt4btc": skipped')
-
+    '''
+    '''
     # click notifications icon to load nostrgram_notifications page
     WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.XPATH, '/html/body/div[1]/div[2]/div/table/tbody/tr/td[3]/span[1]/span[1]'))).click()
     # get all notifications
@@ -201,7 +202,7 @@ def scrape_nostr(driver, r_ply):
     #log('tagged @gpt4btc items found: ' + str(len(tagged_items)))
     
     reply_cnt += reply_to_items(driver, r_ply, tagged_items)
-
+    '''
     '''
     # load direct notifications only
     driver.find_element(By.CSS_SELECTOR, '.userActions > span:nth-child(1)').click()
