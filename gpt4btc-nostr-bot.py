@@ -153,29 +153,32 @@ def scrape_nostr(driver, r_ply):
     f.close()
 
     # search for '@gpt4btc'
-    driver.get(nostrgram_profile)
-    WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'span.searchFeed:nth-child(2)'))).click()
-    search_query = WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#searchQuery')))
-    search_query.send_keys('gpt4btc')
-    driver.find_element(By.CSS_SELECTOR, '#dialogSearch > p:nth-child(1) > button:nth-child(2)').click()
-    search_note_grid = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#searchNostrgram')))
-    
-    # get all searched items including '@gpt4btc' strings
-    all_searched_items = WebDriverWait(search_note_grid, 10).until(EC.presence_of_all_elements_located((By.XPATH, './/div[contains(@class, "event noteItem")]')))
+    try:
+        driver.get(nostrgram_profile)
+        WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'span.searchFeed:nth-child(2)'))).click()
+        search_query = WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#searchQuery')))
+        search_query.send_keys('gpt4btc')
+        driver.find_element(By.CSS_SELECTOR, '#dialogSearch > p:nth-child(1) > button:nth-child(2)').click()
+        search_note_grid = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#searchNostrgram')))
+        
+        # get all searched items including '@gpt4btc' strings
+        all_searched_items = WebDriverWait(search_note_grid, 10).until(EC.presence_of_all_elements_located((By.XPATH, './/div[contains(@class, "event noteItem")]')))
+        tagged_search_items = []
+        for item in all_searched_items:
+            try:
+                content = item.find_element(By.XPATH, './/div[contains(@class, "noteContent")]').text
+                # add only @gpt4btc tags to tagged_items[]
+                if '@gpt4btc' in content:
+                    tagged_search_items.append(item)
+            except NoSuchElementException:
+                continue
 
-    tagged_search_items = []
-    for item in all_searched_items:
-        try:
-            content = item.find_element(By.XPATH, './/div[contains(@class, "noteContent")]').text
-            # add only @gpt4btc tags to tagged_items[]
-            if '@gpt4btc' in content:
-                tagged_search_items.append(item)
-        except NoSuchElementException:
-            continue
-
-    #log('search "@gpt4btc" items found: ' + str(len(tagged_search_items)))
-    
-    reply_cnt += reply_to_items(driver, r_ply, tagged_search_items)
+        #log('search "@gpt4btc" items found: ' + str(len(tagged_search_items)))
+        
+        reply_cnt += reply_to_items(driver, r_ply, tagged_search_items)
+        
+    except Exception:
+        log('Error searching "gpt4btc": skipped')
 
     # click notifications icon to load nostrgram_notifications page
     WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.XPATH, '/html/body/div[1]/div[2]/div/table/tbody/tr/td[3]/span[1]/span[1]'))).click()
