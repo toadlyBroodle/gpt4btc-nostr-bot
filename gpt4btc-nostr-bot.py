@@ -144,7 +144,7 @@ def parse_limit_line(dl):
     except IndexError:
         raise IndexError
 
-def scrape_nostr(driver, r_ply):
+def search_for_tags(driver, r_ply):
     reply_cnt = 0
 
     # get scrape dump lines
@@ -152,7 +152,7 @@ def scrape_nostr(driver, r_ply):
     scrp_lines = f.readlines()
     f.close()
 
-    '''    # search for '@gpt4btc'
+    # search for '@gpt4btc'
     try:
         driver.get(nostrgram_profile)
         WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'span.searchFeed:nth-child(2)'))).click()
@@ -176,10 +176,19 @@ def scrape_nostr(driver, r_ply):
         #log('search "@gpt4btc" items found: ' + str(len(tagged_search_items)))
         
         reply_cnt += reply_to_items(driver, r_ply, tagged_search_items)
-        
+        return reply_cnt
+
     except Exception:
         log('Error searching "gpt4btc": skipped')
-    '''
+
+def get_notifs(driver, r_ply):
+    reply_cnt = 0
+
+    # get scrape dump lines
+    f = open(path_scrp_dmp, "r")
+    scrp_lines = f.readlines()
+    f.close()
+
     '''
     # click notifications icon to load nostrgram_notifications page
     WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.XPATH, '/html/body/div[1]/div[2]/div/table/tbody/tr/td[3]/span[1]/span[1]'))).click()
@@ -450,12 +459,16 @@ def post_new_note(driver, p_ost):
     send_button = WebDriverWait(new_note, 2).until(EC.element_to_be_clickable((By.XPATH, './/button[contains(@class, "replyButton")]')))
     send_button.click()
 
+    # allow time for sending
+    sleep(2)
+
 def argument_handler():
     parser = argparse.ArgumentParser(description="Beep, boop.. I'm gpt4btc - a nostr bot!")
 
     # Nostr arguments
     group_scrape = parser.add_argument_group('scrape')
-    group_scrape.add_argument('-s', '--scrape-once', action='store_true', dest='r_scr', help='scrape once')
+    group_scrape.add_argument('-o', '--scrape-once', action='store_true', dest='r_sco', help='scrape once')
+    group_scrape.add_argument('-s', '--search-once', action='store_true', dest='r_ser', help='search once')
     group_scrape.add_argument('-c', '--scrape-loop', action='store_true', dest='r_scn', help='scrape continuously')
     group_scrape.add_argument('-n', '--headless', action='store_true', dest='r_hds', help='scrape in headless mode')
     group_scrape.add_argument('-r', '--reply', action='store_true', dest='r_ply', help='reply to scraped notes')
@@ -494,14 +507,23 @@ def main(argv):
         
         return driver
 
-    # scrape feed once
-    if args.r_scr:
+    # search tags
+    if args.r_ser:
         driver = init(args.r_hds)
 
         # scrape, and reply?
-        reply_cnt = scrape_nostr(driver, args.r_ply)
+        reply_cnt = search_for_tags(driver, args.r_ply)
 
-        log("new replies: " + str(reply_cnt))
+        log("new scrape replies: " + str(reply_cnt))
+
+    # scrape feed once
+    if args.r_sco:
+        driver = init(args.r_hds)
+
+        # scrape, and reply?
+        reply_cnt = get_notifs(driver, args.r_ply)
+
+        log("new scrape replies: " + str(reply_cnt))
 
     # scrape feed continuously
     if args.r_scn:
@@ -511,9 +533,9 @@ def main(argv):
         while num_errors < 3: # exit after three errors caught
             try:
                 # scrape, and reply?
-                reply_cnt = scrape_nostr(driver, args.r_ply)
+                reply_cnt = get_notifs(driver, args.r_ply)
 
-                log("new replies: " + str(reply_cnt))
+                log("new scrape replies: " + str(reply_cnt))
 
                 # wait 5-10m between passes
                 wait(300, 600)
